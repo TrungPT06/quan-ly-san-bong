@@ -1,0 +1,77 @@
+name: CI/CD
+
+# Chạy khi đẩy mã lên main hoặc mở Pull Request
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------- CI: lint + test + build ----------------
+  build:
+    name: Lint, Test & Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Cài thư viện
+        run: npm ci
+
+      - name: Lint (ESLint + eslint-plugin-vue)
+        run: npm run lint
+
+      - name: Unit test (API client, Pinia stores, AI API)
+        run: npm test
+
+      - name: Component/Router smoke test (Vitest + jsdom)
+        run: npm run test:ui
+
+      - name: Build production
+        run: npm run build
+        env:
+          # Khi deploy lên GitHub Pages dùng đường dẫn /<tên-repo>/
+          VITE_BASE: /${{ github.event.repository.name }}/
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+          VITE_AI_PROVIDER: ${{ vars.VITE_AI_PROVIDER }}
+          VITE_AI_MODEL: ${{ vars.VITE_AI_MODEL }}
+          VITE_AI_API_KEY: ${{ secrets.VITE_AI_API_KEY }}
+
+      # GitHub Pages không có rewrite: dùng 404.html làm fallback cho SPA (Vue Router history mode)
+      - name: SPA fallback cho GitHub Pages
+        run: cp dist/index.html dist/404.html
+
+      - name: Upload artifact để deploy
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  # ---------------- CD: deploy GitHub Pages ----------------
+  deploy:
+    name: Deploy GitHub Pages
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

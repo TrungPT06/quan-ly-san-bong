@@ -1,0 +1,111 @@
+# ===================================================================
+# GitLab CI/CD pipeline for fe-cicd
+# React + Vite, served by nginx
+# ===================================================================
+
+stages:
+  - build
+  - package
+  - deploy
+
+# Bắt buộc dùng runner frontend trên VPS
+default:
+  tags:
+    - sports-fe
+
+variables:
+  # Nên ghi đè giá trị này trong GitLab CI/CD Variables
+  VITE_API_BASE_URL: "" # Same-origin /api, or set an HTTPS API URL in CI.
+
+  IMAGE_TAG: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+  IMAGE_LATEST: "$CI_REGISTRY_IMAGE:latest"
+
+  # Đặt npm cache trong thư mục project
+  npm_config_cache: "$CI_PROJECT_DIR/.npm"
+
+cache:
+  key:
+    files:
+      - package-lock.json
+  paths:
+    - .npm/
+  policy: pull-push
+
+# -------------------------------------------------------------------
+# 1. Build React
+# -------------------------------------------------------------------
+build:
+  stage: build
+  image: node:22-alpine
+  script:
+    - npm ci
+    - npm run lint
+    - npm test
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 1 hour
+
+# -------------------------------------------------------------------
+# 2. Kiểm tra mã nguồn
+# -------------------------------------------------------------------
+#test:
+#  stage: test
+#  image: node:22-alpine
+#  script:
+#    - npm ci
+#    - npm run lint
+#    - npm run test -- --run
+#  allow_failure: false
+
+# -------------------------------------------------------------------
+# 3. Build và push Docker image
+# Docker socket binding, không dùng docker:dind
+# -------------------------------------------------------------------
+package:
+  stage: package
+  image: docker:24.0
+  before_script:
+    - docker info
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - docker build --provenance=false --build-arg VITE_API_BASE_URL="$VITE_API_BASE_URL" -t "$IMAGE_TAG" -t "$IMAGE_LATEST" .
+    - docker push "$IMAGE_TAG"
+    - docker push "$IMAGE_LATEST"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# -------------------------------------------------------------------
+# 4. Deploy frontend trên VPS
+# -------------------------------------------------------------------
+deploy:
+  stage: deploy
+  image: docker:24.0
+  before_script:
+    - docker info
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - docker pull "$IMAGE_TAG"
+    - docker rm -f fe-cicd || true
+#    - docker run -d --name fe-cicd --restart unless-stopped --network "$DOCKER_NETWORK" -e API_UPSTREAM="$API_UPSTREAM" -p 3004:80 "$IMAGE_TAG"
+    - docker run -d --name fe-cicd --restart unless-stopped -p 3004:80 "$IMAGE_TAG"
+    # Đợi Nginx trong container khởi động
+    - sleep 5
+
+    # Kiểm tra container còn chạy
+    - docker inspect -f '{{.State.Running}}' fe-cicd | grep true
+    - docker logs --tail 100 fe-cicd
+
+    # Dọn tài nguyên Docker cũ
+    - docker container prune -f
+    - docker image prune -a -f --filter "until=168h"
+    - docker builder prune -f --filter "until=168h"
+
+  environment:
+    name: staging
+    url: http://IP_VPS:3004
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual

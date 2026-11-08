@@ -1,0 +1,32 @@
+name: Backend CI (Spring Boot)
+
+on:
+  push:
+    paths:
+      - 'QuanLySanBong/be/**'
+      - '.github/workflows/backend-ci.yml'
+  pull_request:
+    paths:
+      - 'QuanLySanBong/be/**'
+      - '.github/workflows/backend-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Build & Test Backend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'maven'
+
+      - name: Run Maven Tests
+        working-directory: QuanLySanBong/be
+        run: mvn -B clean test

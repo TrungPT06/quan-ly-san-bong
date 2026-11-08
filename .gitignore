@@ -1,0 +1,41 @@
+# ===== Dependencies & Build Outputs =====
+**/node_modules/
+**/target/
+**/dist/
+**/build/
+**/out/
+**/bin/
+
+# ===== Environment / Secrets (KHÔNG commit file chứa secret) =====
+**/.env
+**/.env.local
+**/.env.*
+!**/.env.example
+application-local.*
+application-secret*.*
+*.pem
+*.key
+
+# ===== IDE / Editor =====
+**/.idea/
+**/.vscode/
+*.iml
+*.iws
+*.ipr
+
+# ===== Logs =====
+*.log
+**/logs/
+npm-debug.log*
+yarn-debug.log*
+
+# ===== OS / Cache =====
+.DS_Store
+Thumbs.db
+**/.cache/
+**/.vite/
+**/.eslintcache
+**/.m2/
+
+# ===== Git Backup =====
+**/.git_backup*

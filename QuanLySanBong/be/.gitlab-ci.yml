@@ -1,0 +1,107 @@
+# ===================================================================
+# GitLab CI/CD pipeline for be-cicd (Spring Boot 2.7.0 / Java 11)
+# Stages: build -> test -> package (Docker image) -> deploy
+# ===================================================================
+
+stages:
+  - build
+  - test
+  - package
+  - deploy
+
+default:
+  tags:
+    - sports-be
+
+variables:
+  # Speed up Maven and keep the local repo inside the project so it can be cached
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=WARN"
+  MAVEN_CLI_OPTS: "-B --no-transfer-progress"
+  # Image naming (uses GitLab's built-in Container Registry)
+  IMAGE_TAG: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+  IMAGE_LATEST: "$CI_REGISTRY_IMAGE:latest"
+
+# Cache the Maven dependencies between jobs/pipelines
+cache:
+  key: "$CI_COMMIT_REF_SLUG"
+  paths:
+    - .m2/repository
+
+# -------------------------------------------------------------------
+# 1) Compile the application
+# -------------------------------------------------------------------
+build:
+  stage: build
+  image: maven:3.8.6-eclipse-temurin-11
+  script:
+    - mvn $MAVEN_CLI_OPTS clean compile
+  artifacts:
+    paths:
+      - target/
+    expire_in: 1 hour
+
+# -------------------------------------------------------------------
+# 2) Run unit tests
+# -------------------------------------------------------------------
+test:
+  stage: test
+  image: maven:3.8.6-eclipse-temurin-11
+  script:
+    - mvn $MAVEN_CLI_OPTS -Dspring.profiles.active=test test
+  artifacts:
+    when: always
+    reports:
+      junit:
+        - target/surefire-reports/TEST-*.xml
+    paths:
+      - target/surefire-reports/
+    expire_in: 1 week
+
+# -------------------------------------------------------------------
+# 3) Package the jar and build/push the Docker image
+#    Uses Docker-in-Docker (dind)
+# -------------------------------------------------------------------
+package:
+  stage: package
+  image: docker:24.0
+  before_script:
+    - docker info
+    - echo "$CI_REGISTRY_PASSWORD" |
+      docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - docker build --provenance=false -t "$IMAGE_TAG" -t "$IMAGE_LATEST" .
+    - docker push "$IMAGE_TAG"
+    - docker push "$IMAGE_LATEST"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# -------------------------------------------------------------------
+# 4) Deploy (placeholder)
+#    Pull the freshly built image and run it. Adjust for your target
+#    environment (SSH to a server, kubectl apply, docker compose, ...).
+# -------------------------------------------------------------------
+deploy:
+  stage: deploy
+  image: docker:24.0
+  before_script:
+    - docker info
+    - echo "$CI_REGISTRY_PASSWORD" |
+      docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - test -n "$APP_ENV_FILE" && test -f "$APP_ENV_FILE" && test -n "$DOCKER_NETWORK"
+    - docker pull "$IMAGE_TAG"
+    - docker rm -f sports-be || true
+    - docker run -d
+      --name sports-be
+      --restart unless-stopped
+      --network "$DOCKER_NETWORK"
+      --env-file "$APP_ENV_FILE"
+      -p 8084:8084
+      "$IMAGE_TAG"
+    - docker ps --filter "name=sports-be"
+  environment:
+    name: staging
+    url: http://IP_VPS:8084
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
